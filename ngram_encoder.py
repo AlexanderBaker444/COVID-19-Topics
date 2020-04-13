@@ -9,11 +9,17 @@ from tqdm import tqdm
 from collections import Counter
 import re
 import heapq
+import tensorflow as tf
+import pickle as p
 
 df=pd.read_csv('metadata.csv')
+df["publish_year"] = list(map(lambda date: int(date[:4]) if type(date)==str else 0,df['publish_time']))
+df = df[df["publish_year"]>=2000].reset_index(drop=True)
 abstracts=df['abstract']
 
-ngram_count = 2
+ngram_count = 1
+num_words_to_keep = 20000
+num_ngrams_to_keep = 15000
 
 def string_cleaner(text):
     # Clean the documents
@@ -31,98 +37,109 @@ def string_cleaner(text):
     tokens = [t for t in tokens if len(t) > 2] # remove short words, they're probably not useful
     return tokens
 
-def generate_ngram_mappings(text_tokens,ngram_count = 2):
-    if len(text_tokens) == 1:
-        text_tokens = [text_tokens]
-    ngrams = {}
-    for corpus in tqdm(text_tokens):
-        for i in range(len(corpus) - ngram_count):
-            seq = ' '.join(corpus[i:i + ngram_count])
-            if seq not in ngrams.keys():
-                ngrams[seq] = []
-            ngrams[seq].append(corpus[i + ngram_count])
-    return ngrams
+# text_tokens = [string_cleaner(abstract) for abstract in abstracts]
+# with open("abstract_tokens.p","wb") as handle:
+#     p.dump(text_tokens,handle)
 
-abstract_tokens = [string_cleaner(abstract) for abstract in abstracts]
-ngram_mapping = generate_ngram_mappings(abstract_tokens)
-
-ngram_counts = {}
-for (key,values) in ngram_mapping.items():
-    ngram_counts[key] = dict(Counter(values))
-
-all_counts = []
-for count_dict in ngram_counts.values():
-    # print(count_dict)
-    all_counts.extend(list(count_dict.values()))
-
-num_ngrams_to_keep = 5000
-keep_count = heapq.nlargest(num_ngrams_to_keep, all_counts)[-1]
-
-current_count_words = 0
-for (key,values) in tqdm(ngram_counts.items()):
-    trimmed_values = values.copy()
-    for (k, v) in values.items():
-        if v<keep_count or current_count_words>=5000:
-            trimmed_values.pop(k)
-        else:
-            current_count_words+=1
-    # if there is still a values in the dictionary re-assign the ngram with the trimmed dictionary
-    # else, pop the current ngram, as there are no words that meet the current minimum count
-    if trimmed_values:
-        ngram_mapping[key]=list(trimmed_values.keys())
-    else:
-        ngram_mapping.pop(key)
-
-ngram_columns = []
-for (key,values) in tqdm(ngram_mapping.items()):
-    for value in values:
-        ngram_columns.append(" ".join([key,value]))
-
-ngram_count_matrix = pd.DataFrame(0, index=np.arange(len(abstracts)),columns=ngram_columns)
-
-for i in tqdm(range(len(abstracts))):
-    tokens = abstract_tokens[i]
-    for j in range(len(tokens) - ngram_count):
-        seq = ' '.join(tokens[j:j + ngram_count + 1])
-        if seq in ngram_columns:
-            col_ind = ngram_columns.index(seq)
-            ngram_count_matrix.iloc[i,col_ind]+=1
+with open("abstract_tokens.p","rb") as handle:
+    text_tokens = p.load(handle)
 
 
-
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
-scaler = MinMaxScaler()
-scaled_df = scaler.fit_transform(ngram_count_matrix)
-pca = PCA(n_components=100)
-pca_df = pca.fit_transform(scaled_df)
-print(sum(pca.explained_variance_ratio_))
-kmeans = KMeans(n_clusters=10, random_state=0).fit(pca_df)
-clusters = kmeans.predict(pca_df)
-df["pca_clusters"] = clusters
-df['pca_clusters'].value_counts()
-
-#always more types of topic modeling Latent Discriminate Analysis
-from sklearn.decomposition import NMF, LatentDirichletAllocation
-nmf = NMF(n_components=100)
-nnmf_df = nmf.fit_transform(ngram_count_matrix)
-from sklearn.cluster import KMeans
-kmeans = KMeans(n_clusters=10, random_state=0).fit(nnmf_df)
-clusters = kmeans.predict(nnmf_df)
-
-df["nnmf_clusters"] = clusters
-df['nnmf_clusters'].value_counts()
-
-
-
-# hierarchal clustering
-from sklearn.cluster import AgglomerativeClustering
-agg=AgglomerativeClustering(n_clusters=10).fit(nnmf_df)
-agg_df = agg.transform(nnmf_df)
-
-
-# # Run LDA
-# lda = LatentDirichletAllocation( max_iter=5, learning_method='online', learning_offset=50.,random_state=0).fit(scaled_df)
 #
+# from sklearn.preprocessing import MinMaxScaler
+# from sklearn.cluster import KMeans
+# from sklearn.decomposition import PCA
+# scaler = MinMaxScaler()
+# scaled_df = scaler.fit_transform(ngram_count_matrix)
+# pca = PCA(n_components=100)
+# pca_df = pca.fit_transform(scaled_df)
+# print(sum(pca.explained_variance_ratio_))
+# kmeans = KMeans(n_clusters=10, random_state=0).fit(pca_df)
+# clusters = kmeans.predict(pca_df)
+# df["pca_clusters"] = clusters
+# df['pca_clusters'].value_counts()
+
+# #always more types of topic modeling Latent Discriminate Analysis
+from sklearn.decomposition import NMF, LatentDirichletAllocation
+# nmf = NMF(n_components=100)
+# nnmf_df = nmf.fit_transform(ngram_count_matrix)
+# from sklearn.cluster import KMeans
+# kmeans = KMeans(n_clusters=10, random_state=0).fit(nnmf_df)
+# clusters = kmeans.predict(nnmf_df)
+#
+# df["nnmf_clusters"] = clusters
+# df['nnmf_clusters'].value_counts()
+from sklearn.feature_extraction.text import CountVectorizer
+
+# Initialise the count vectorizer with the English stop words
+count_vectorizer = CountVectorizer(stop_words='english',max_features=num_words_to_keep,ngram_range=(2,2))
+# Fit and transform the processed titles
+count_data = count_vectorizer.fit_transform([" ".join(tokens) for tokens in text_tokens])
+
+# Helper function (pulled from https://towardsdatascience.com/end-to-end-topic-modeling-in-python-latent-dirichlet-allocation-lda-35ce4ed6b3e0)
+import seaborn as sns
+def plot_10_most_common_words(count_data, count_vectorizer):
+    import matplotlib.pyplot as plt
+    words = count_vectorizer.get_feature_names()
+    total_counts = np.zeros(len(words))
+    for t in count_data:
+        total_counts += t.toarray()[0]
+
+    count_dict = (zip(words, total_counts))
+    count_dict = sorted(count_dict, key=lambda x: x[1], reverse=True)[0:10]
+    words = [w[0] for w in count_dict]
+    counts = [w[1] for w in count_dict]
+    x_pos = np.arange(len(words))
+
+    plt.figure(2, figsize=(15, 15 / 1.6180))
+    plt.subplot(title='10 most common words')
+    sns.set_context("notebook", font_scale=1.25, rc={"lines.linewidth": 2.5})
+    sns.barplot(x_pos, counts, palette='husl')
+    plt.xticks(x_pos, words, rotation=90)
+    plt.xlabel('words')
+    plt.ylabel('counts')
+    plt.show()
+def print_topics(model, count_vectorizer, n_top_words):
+    words = count_vectorizer.get_feature_names()
+    for topic_idx, topic in enumerate(model.components_):
+        print("\nTopic #%d:" % topic_idx)
+        print(" ".join([words[i]
+                        for i in topic.argsort()[:-n_top_words - 1:-1]]))
+# Visualise the 10 most common words
+plot_10_most_common_words(count_data, count_vectorizer)
+
+
+number_topics = 10
+number_words = 10
+# Run LDA
+lda = LatentDirichletAllocation(n_components=number_topics, max_iter=100,random_state=0,n_jobs=-1)
+lda.fit(count_data)
+
+# Print the topics found by the LDA model
+print("Topics found via LDA:")
+print_topics(lda, count_vectorizer, number_words)
 # lda_df = lda.transform(scaled_df)
+
+#
+# # hierarchal clustering
+# from sklearn.cluster import AgglomerativeClustering
+# agg=AgglomerativeClustering(n_clusters=10).fit(nnmf_df)
+# agg_df = agg.transform(nnmf_df)
+
+from pyLDAvis import sklearn as sklearn_lda
+import pickle
+import pyLDAvis
+import os
+
+LDAvis_data_filepath = os.path.join('./ldavis_prepared_' + str(number_topics))
+# # this is a bit time consuming - make the if statement True
+# # if you want to execute visualization prep yourself
+if 1 == 1:
+    LDAvis_prepared = sklearn_lda.prepare(lda, count_data, count_vectorizer)
+with open(LDAvis_data_filepath, 'wb') as f:
+    pickle.dump(LDAvis_prepared, f)
+
+# load the pre-prepared pyLDAvis data from disk
+with open(LDAvis_data_filepath) as f:
+    LDAvis_prepared = pickle.load(f)
+pyLDAvis.save_html(LDAvis_prepared, './ldavis_prepared_' + str(number_topics) + '.html')

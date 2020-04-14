@@ -12,6 +12,8 @@ import heapq
 import tensorflow as tf
 import pickle as p
 
+pd.set_option('display.expand_frame_repr', False)
+
 df=pd.read_csv('metadata.csv')
 df["publish_year"] = list(map(lambda date: int(date[:4]) if type(date)==str else 0,df['publish_time']))
 df = df[df["publish_year"]>=2000].reset_index(drop=True)
@@ -47,7 +49,7 @@ with open("abstract_tokens.p","rb") as handle:
 
 #
 # from sklearn.preprocessing import MinMaxScaler
-# from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans
 # from sklearn.decomposition import PCA
 # scaler = MinMaxScaler()
 # scaled_df = scaler.fit_transform(ngram_count_matrix)
@@ -78,8 +80,8 @@ count_data = count_vectorizer.fit_transform([" ".join(tokens) for tokens in text
 
 # Helper function (pulled from https://towardsdatascience.com/end-to-end-topic-modeling-in-python-latent-dirichlet-allocation-lda-35ce4ed6b3e0)
 import seaborn as sns
+import matplotlib.pyplot as plt
 def plot_10_most_common_words(count_data, count_vectorizer):
-    import matplotlib.pyplot as plt
     words = count_vectorizer.get_feature_names()
     total_counts = np.zeros(len(words))
     for t in count_data:
@@ -103,21 +105,67 @@ def print_topics(model, count_vectorizer, n_top_words):
     words = count_vectorizer.get_feature_names()
     for topic_idx, topic in enumerate(model.components_):
         print("\nTopic #%d:" % topic_idx)
-        print(" ".join([words[i]
+        print(", ".join([words[i]
                         for i in topic.argsort()[:-n_top_words - 1:-1]]))
 # Visualise the 10 most common words
 plot_10_most_common_words(count_data, count_vectorizer)
 
 
-number_topics = 10
+number_topics = 12
 number_words = 10
+
+
+
 # Run LDA
 lda = LatentDirichletAllocation(n_components=number_topics, max_iter=100,random_state=0,n_jobs=-1)
 lda.fit(count_data)
+lda_data = pd.DataFrame(lda.transform(count_data), columns = ["Topic_"+str(i) for i in range(number_topics)])
+agg_df = pd.concat([df,lda_data], axis=1)
+
+aggregations = {"Topic_"+str(i):'mean' for i in range(number_topics)}
+aggregations["url"] = "count"
+agg_df = agg_df.groupby("publish_year").agg(aggregations)
 
 # Print the topics found by the LDA model
 print("Topics found via LDA:")
 print_topics(lda, count_vectorizer, number_words)
+
+
+plt.figure()
+plt.plot(agg_df["url"])
+plt.xlabel('Years')
+plt.ylabel('Document Count')
+
+
+plt.figure()
+plt.plot(agg_df["Topic_3"], label="COVID-19 Topic")
+plt.plot(agg_df["Topic_5"], label="MERS Topic")
+plt.plot(agg_df["Topic_6"], label="SARS Topic")
+plt.xlabel('Years')
+plt.ylabel('Topic Percent Relevance')
+plt.legend(loc='upper left')
+
+plt.figure()
+plt.plot(agg_df["Topic_2"], label="Virus Transmissions Topic")
+plt.plot(agg_df["Topic_4"], label="Vaccine Topic")
+plt.plot(agg_df["Topic_0"], label="Modeling/Immune Response Topic")
+plt.xlabel('Years')
+plt.ylabel('Topic Percent Relevance')
+plt.legend(loc='upper left')
+
+# from sklearn.cluster import KMeans
+# from sklearn.decomposition import PCA
+# # scaler = MinMaxScaler()
+# # scaled_df = scaler.fit_transform(ngram_count_matrix)
+# pca = PCA(n_components=25)
+# pca_df = pca.fit_transform(count_data.todense())
+# print(sum(pca.explained_variance_ratio_))
+# kmeans = KMeans(n_clusters=10, random_state=0).fit(pca_df)
+# clusters = kmeans.predict(pca_df)
+# df["pca_clusters"] = clusters
+# df['pca_clusters'].value_counts()
+
+
 # lda_df = lda.transform(scaled_df)
 
 #
